@@ -76,7 +76,7 @@ def predict_and_visualize(
     # Load the TensorFlow Lite model.
     si, sid, sod = load_tflite_model(speed_model_path)
 
-    sc = load('../models/std_scaler.bin')
+    sc = load('../../models/std_scaler.bin')
 
     # Create an instance of the Lucas-Kanade optical flow algorithm
     lk_params = dict(
@@ -249,7 +249,7 @@ def predict_and_visualize(
     return X, Y
 
 
-def save_data_in_file(X, Y, path='../data/data2.csv'):
+def save_data_in_file(X, Y, path='../../data/data2.csv'):
     # Define field names (column headers)
     field_names = [
         'frame_nmr', 'x', 'y', 'pixel_speed',
@@ -281,12 +281,12 @@ def save_data_in_file(X, Y, path='../data/data2.csv'):
 
 # Main function
 def main():
-    xml_path = '../data/vehicles.xml'
-    in_video_path = '../data/video.h264'
-    out_video_path = '../data/out.mp4'
+    xml_path = '../../data/vehicles.xml'
+    in_video_path = '../../data/video.h264'
+    out_video_path = '../../data/out.mp4'
     license_plate_detector_model_path = '' +\
-        '../models/license_plate_detector_float32.tflite'
-    speed_prediction_model_path = '../models/speed_prediction_model.tflite'
+        '../../models/license_plate_detector_float32.tflite'
+    speed_prediction_model_path = '../../models/speed_prediction_model.tflite'
 
     vehicles = parse_xml(xml_path)
     print('xml file was parsed successfully!\n')

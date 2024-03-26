@@ -190,7 +190,7 @@ def extract_augmented_data(video_path, vehicles, modelpath, real_data_coef=50,
     return X, Y
 
 
-def save_data_in_file(X, Y, path='../data/data.csv'):
+def save_data_in_file(X, Y, path='../../data/data.csv'):
     # Define field names (column headers)
     field_names = ['x', 'y', 'pixel_speed', 'real_speed']
 
@@ -271,11 +271,11 @@ def save_model(model, model_path):
 
 # Main function
 def main():
-    xml_path = '../data/vehicles.xml'
-    video_path = '../data/video.h264'
+    xml_path = '../../data/vehicles.xml'
+    video_path = '../../data/video.h264'
     license_plate_detector_model_path = '' +\
-        '../models/license_plate_detector_float32.tflite'
-    speed_prediction_model_path = '../models/speed_prediction_model.tflite'
+        '../../models/license_plate_detector_float32.tflite'
+    speed_prediction_model_path = '../../models/speed_prediction_model.tflite'
 
     vehicles = parse_xml(xml_path)
     print('xml file was parsed successfully!\n')
@@ -295,7 +295,7 @@ def main():
 
     model, scaler = train(X, y)
 
-    dump(scaler, '../models/std_scaler.bin', compress=True)
+    dump(scaler, '../../models/std_scaler.bin', compress=True)
 
     print('\nModel trained!')
 

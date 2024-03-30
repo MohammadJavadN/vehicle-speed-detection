@@ -6,8 +6,6 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -73,9 +71,9 @@ public class MainActivity extends AppCompatActivity {
     private final static double MEAN_A = 936.88328756;
     private final static double MEAN_B = 617.87426442;
     private final static double MEAN_P = 42.33951691;
-    private final static double VAR_A = 303428.44361634;
-    private final static double VAR_B = 104233.31078923;
-    private final static double VAR_P = 697.72113379;
+    private final static double VAR_A = 550.843393004;
+    private final static double VAR_B = 322.851840306;
+    private final static double VAR_P = 26.414411479;
     private static Mat prevGray;
     private static List<Point> prevPts = new ArrayList<>();
 
@@ -207,18 +205,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public static int getId(float x, float y, int imW) {
-        int gs = 400;  // grid_width
+        int gs = (int) (imW/4.8);  // grid_width
         return (int) ((y / gs) * (imW / gs) + (x / gs));
     }
 
     public static int getLane(int x, int y) {
-        if (x < 590) {
+        if (x < 0.307*imW) {
             return 1;
         }
-        if (x < 940 + 0.37 * y) {
+        if (x < 0.49 * imW + 0.37 * y) {
             return 2;
         }
-        if (x < 1320 + 0.8 * y) {
+        if (x < 0.6875 * imW + 0.8 * y) {
             return 3;
         }
         return 4;
@@ -271,6 +269,7 @@ public class MainActivity extends AppCompatActivity {
             MainActivity.frameNum++;
             imH = frame.rows();
             imW = frame.cols();
+            System.out.println("imW=" + imW + "imH=" + imH);
 
             Mat imageRgb = new Mat();
             Imgproc.cvtColor(frame, imageRgb, Imgproc.COLOR_BGR2RGB);
@@ -319,7 +318,7 @@ public class MainActivity extends AppCompatActivity {
                         double c = oldPt.x;
                         double d = oldPt.y;
 
-                        if (b < 200) {
+                        if (b < 0.18 * imH) {
                             continue;
                         }
 
@@ -350,7 +349,7 @@ public class MainActivity extends AppCompatActivity {
                         int lane = getLane((int) newPt.x, (int) newPt.y);
                         Imgproc.putText(frame,
                                 String.format("%.2f", predictedSpeed),
-                                new Point(lane * 400, 35),
+                                new Point(lane * 0.208 * imW, 35),
                                 Imgproc.FONT_HERSHEY_SIMPLEX,
                                 1.5,
                                 new Scalar(0, 0, 255),
@@ -361,36 +360,30 @@ public class MainActivity extends AppCompatActivity {
                     Core.add(frame, mask, frame);
                 }
             }catch (Exception e){
-                System.out.println(e.toString() + "line 370");
+                System.out.println(e.toString());
             }
 
             MainActivity.prevPts = new ArrayList<>();
             for (List<Float> sumBoxCnt : plates.values()) {
-                System.out.println("Calculating mean of boxes1");
                 float sumX = sumBoxCnt.get(0);
                 float sumY = sumBoxCnt.get(1);
                 float sumW = sumBoxCnt.get(2);
                 float sumH = sumBoxCnt.get(3);
                 float cnt = sumBoxCnt.get(4);
-                System.out.println("Calculating mean of boxes2");
 
                 float xCenter = sumX / cnt;
                 float yCenter = sumY / cnt;
                 float w = sumW / cnt;
                 float h = sumH / cnt;
-                System.out.println("Calculating mean of boxes3");
 
                 MainActivity.prevPts.add(new Point((int) (xCenter * imW), (int) (yCenter * imH)));
-                System.out.println("Calculating mean of boxes4");
 
                 int x1 = (int) ((xCenter - w / 2) * imW);
                 int y1 = (int) ((yCenter - h / 2) * imH);
                 int x2 = (int) ((xCenter + w / 2) * imW);
                 int y2 = (int) ((yCenter + h / 2) * imH);
-                System.out.println("Calculating mean of boxes5");
 
                 Imgproc.rectangle(frame, new Point(x1, y1), new Point(x2, y2), new Scalar(10, 255, 0), 2);
-                System.out.println("Calculating mean of boxes6");
             }
 
             MainActivity.prevGray = frameGray.clone();
@@ -494,7 +487,7 @@ public class MainActivity extends AppCompatActivity {
                 float w = floats[i + 2*N];
                 float h = floats[i + 3*N];
 
-                if ((yCenter > 250f / imW) && (w < 100f / imH) && (h < 100f / imW)) {
+                if ((yCenter > 0.104) && (w < 0.093) && (h < 0.052)) {
                     int carId = getId(xCenter * imW, yCenter * imH, imW);
 
                     List<Float> sumBoxCnt = plates.getOrDefault(carId, Arrays.asList(0f, 0f, 0f, 0f, 0f));

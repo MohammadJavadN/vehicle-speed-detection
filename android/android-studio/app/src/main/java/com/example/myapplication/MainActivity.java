@@ -6,11 +6,13 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.SurfaceView;
+import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
@@ -32,6 +34,7 @@ import org.opencv.video.Video;
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -40,6 +43,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -100,7 +104,12 @@ public class MainActivity extends AppCompatActivity {
         filechoser = registerForActivityResult(
                 new ActivityResultContracts.GetContent(),
                 o -> {
-//                    MainActivity.inVideoPath = o.getPath();
+                    String path = getRealPathFromURI(MainActivity.this, o); // TODO: uncomment
+                    if(new File(Objects.requireNonNull(path)).exists())
+                        MainActivity.inVideoPath = path;
+                    Toast.makeText(getApplicationContext(),
+                            "path: " + path,
+                            Toast.LENGTH_LONG).show();
 //                    MainActivity.inVideoPath = getRealPathFromURI(MainActivity.this, o); // TODO: uncomment
                     System.out.println(MainActivity.inVideoPath);
 
@@ -166,7 +175,11 @@ public class MainActivity extends AppCompatActivity {
                     // Ensure you have a valid 'frame' variable holding the current frame
                     int w = canvas.getWidth();
                     int h = canvas.getHeight();
-                    canvas.drawBitmap(Bitmap.createScaledBitmap(matToBitmap(frame), w, h, false), 0, 0, null);
+                    Matrix matrix = new Matrix();
+                    matrix.postRotate(90);
+                    Bitmap scaledBitmap = Bitmap.createScaledBitmap(matToBitmap(frame), h, w, false);
+                    Bitmap rotatedBitmap = Bitmap.createBitmap(scaledBitmap, 0, 0, h, w, matrix, true);
+                    canvas.drawBitmap(rotatedBitmap, 0, 0, null);
                     surfaceView.getHolder().unlockCanvasAndPost(canvas);
                 }
             } else

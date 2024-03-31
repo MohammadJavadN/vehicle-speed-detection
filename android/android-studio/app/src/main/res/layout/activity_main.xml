@@ -43,9 +43,9 @@
         android:layout_height="wrap_content"
         android:layout_below="@+id/title"
         android:layout_marginTop="10dp"
-        android:text="plateDetection"
-        android:layout_marginLeft="10dp"
-        />
+        android:text="@string/plate_detection_txt"
+        android:layout_marginStart="10dp"
+        tools:ignore="UseSwitchCompatOrMaterialXml" />
 
     <Switch
         android:id="@+id/saveSw"
@@ -54,8 +54,19 @@
         android:layout_below="@+id/plateSw"
         android:layout_marginTop="1dp"
         android:layout_marginRight="10dp"
-        android:text="saveOutput"
+        android:text="@string/save_output_txt"
         android:layout_marginLeft="10dp"
-        />
+        tools:ignore="UseSwitchCompatOrMaterialXml" />
 
+    <Switch
+        android:id="@+id/sideViewSw"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_toEndOf="@id/browseBtn"
+        android:layout_below="@id/title"
+        android:layout_marginTop="10dp"
+        android:layout_marginRight="10dp"
+        android:text="sideView"
+        android:layout_marginLeft="10dp"
+        tools:ignore="UseSwitchCompatOrMaterialXml" />
 </RelativeLayout>

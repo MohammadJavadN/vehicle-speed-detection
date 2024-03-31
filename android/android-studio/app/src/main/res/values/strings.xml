@@ -2,4 +2,6 @@
     <string name="app_name">My Application</string>
     <string name="title">Vehicle Speed Detection</string>
     <string name="browse">Browse</string>
+    <string name="plate_detection_txt">plateDetection</string>
+    <string name="save_output_txt">saveOutput</string>
 </resources>

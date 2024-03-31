@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat;
 
 import com.example.myapplication.ml.LicensePlateDetectorFloat32;
 import com.example.myapplication.ml.SpeedPredictionModel;
+import com.example.myapplication.ml.SpeedPredictionModelSideView;
 
 import org.opencv.android.Utils;
 import org.opencv.core.MatOfByte;
@@ -70,18 +71,15 @@ public class MainActivity extends AppCompatActivity {
 
     private static VideoCapture cap;
     private static VideoWriter out;
+    private static Scalar speedColor = new Scalar(255,0,0);
 
     private static LicensePlateDetectorFloat32 plateDetectorModel;
     private static SpeedPredictionModel speedPredictionModel;
+    private static SpeedPredictionModelSideView speedPredictionModelSideView;
     private static TensorBuffer plateInputFeature;
     private static TensorBuffer speedInputFeature;
+    private static TensorBuffer sideSpeedInputFeature;
     private static int height, width;
-    private final static double MEAN_A = 936.88328756;
-    private final static double MEAN_B = 617.87426442;
-    private final static double MEAN_P = 42.33951691;
-    private final static double VAR_A = 550.843393004;
-    private final static double VAR_B = 322.851840306;
-    private final static double VAR_P = 26.414411479;
     private static Mat prevGray;
     private static List<Point> prevPts = new ArrayList<>();
 
@@ -194,7 +192,7 @@ public class MainActivity extends AppCompatActivity {
             if (((Switch)(findViewById(R.id.plateSw))).isChecked())
                 frame = predictAndVisualize(); // TODO
             else
-                frame = predictWithoutPlate();
+                frame = predictWithoutPlate(((Switch)(findViewById(R.id.sideViewSw))).isChecked());
             System.out.println("activated:" + ((Switch)(findViewById(R.id.plateSw))).isChecked());
             if (frame != null) {
                 if (((Switch)(findViewById(R.id.saveSw))).isChecked())
@@ -232,9 +230,11 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         // Release resources
-        if (MainActivity.cap != null && MainActivity.cap.isOpened()) {
+        if (MainActivity.cap != null && MainActivity.cap.isOpened())
             MainActivity.cap.release();
-        }
+        if (MainActivity.out != null && MainActivity.out.isOpened())
+            MainActivity.out.release();
+
         if (scheduledExecutorService != null) {
             scheduledExecutorService.shutdown();
         }
@@ -283,9 +283,12 @@ public class MainActivity extends AppCompatActivity {
             MainActivity.width = 640;
 
             speedPredictionModel = SpeedPredictionModel.newInstance(MainActivity.this);
-
             // Creates inputs for reference.
             speedInputFeature = TensorBuffer.createFixedSize(new int[]{1, 3}, DataType.FLOAT32);
+
+            speedPredictionModelSideView = SpeedPredictionModelSideView.newInstance(MainActivity.this);
+            sideSpeedInputFeature = TensorBuffer.createFixedSize(new int[]{1, 3}, DataType.FLOAT32);
+
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -299,7 +302,7 @@ public class MainActivity extends AppCompatActivity {
         MainActivity.frameNum = 0;
     }
 
-    public static Mat predictWithoutPlate() {
+    public static Mat predictWithoutPlate(boolean sideView) {
         Mat frame = new Mat();
         if (MainActivity.frameNum < MainActivity.maxFrames) {
             boolean ret = cap.read(frame);
@@ -325,7 +328,7 @@ public class MainActivity extends AppCompatActivity {
 
                     MatOfPoint prevPtsMat_ = new MatOfPoint();
 
-                    Imgproc.goodFeaturesToTrack(MainActivity.prevGray, prevPtsMat_,100,0.3,7, new Mat(),7,false,0.04);
+                    Imgproc.goodFeaturesToTrack(MainActivity.prevGray, prevPtsMat_,150,0.3,5, new Mat(),7,false,0.04);
 
                     MatOfPoint2f prevPtsMat = new MatOfPoint2f(prevPtsMat_.toArray());
 
@@ -362,35 +365,53 @@ public class MainActivity extends AppCompatActivity {
 
                             double pixelSpeed = Math.sqrt(Math.pow(a - c, 2) + Math.pow(b - d, 2));
 
-                            // Transform input data using standardScaler
-                            double[] normalized;
-                            normalized = new double[]{(a - MEAN_A) / VAR_A, (b - MEAN_B) / VAR_B, (pixelSpeed - MEAN_P) / VAR_P};
+                            double[] input_data = {a, b, pixelSpeed};
+
                             // Get output tensor (predicted_speed_function)
-                            float predictedSpeed = predictSpeed(normalized);
-                            if (pixelSpeed > 5) {
-                                laneSpeeds[lane - 1] += 1.3f * predictedSpeed;
-                                cntOfLaneSpeeds[lane - 1]++;
+                            float predictedSpeed = predictSpeed(input_data, sideView);
+                            if (pixelSpeed > 15) {
+                                if (!sideView){
+                                    predictedSpeed = 1.3f * predictedSpeed;
+                                    laneSpeeds[lane - 1] += predictedSpeed;
+                                    cntOfLaneSpeeds[lane - 1]++;
+                                } else {
+                                    laneSpeeds[0] += predictedSpeed;
+                                    cntOfLaneSpeeds[0]++;
+                                }
                                 Imgproc.line(mask, newPt, oldPt, new Scalar(255, 0, 0), 4 * imW / 1920);
                                 Imgproc.circle(mask, newPt, (5 * imW) / 1920, new Scalar(255, 0, 0), -1);
                             }
                         }
                     }
-                    for (int lane = 0; lane < 4; lane++) {
+                    if (sideView){
                         // Draw lines and circles
-                        // Get output tensor (predicted_speed_function)
-                        float speed = laneSpeeds[lane]/cntOfLaneSpeeds[lane];
+                        int speed = (int) (laneSpeeds[0]/cntOfLaneSpeeds[0]*10);
 
-                        if (speed < 5)
+                        if (speed < 20)
                             speed = 0;
                         Imgproc.putText(frame,
-                                String.format("%.2f", speed),
-                                new Point((lane+1) * 0.208 * imW, 55),
+                                Float.toString((float) speed /10),
+                                new Point(0.45 * imW, 55),
                                 Imgproc.FONT_HERSHEY_PLAIN,
-                                4.5*imW/1920,
-                                new Scalar(0, 0, 255),
+                                5.5*imW/1920,
+                                speedColor,
                                 6*imW/1920);
+                    } else
+                        for (int lane = 0; lane < 4; lane++) {
+                            // Draw lines and circles
+                            int speed = (int) (laneSpeeds[lane]/cntOfLaneSpeeds[lane]*10);
 
-                    }
+                            if (speed < 5)
+                                speed = 0;
+                            Imgproc.putText(frame,
+                                    Float.toString((float) speed /10),
+                                    new Point((lane+1) * 0.208 * imW, 55),
+                                    Imgproc.FONT_HERSHEY_PLAIN,
+                                    4.5*imW/1920,
+                                    speedColor,
+                                    6*imW/1920);
+
+                        }
                     // Add mask to frame
                     Core.add(frame, mask, frame);
                 }
@@ -473,31 +494,30 @@ public class MainActivity extends AppCompatActivity {
 
                         double pixelSpeed = Math.sqrt(Math.pow(a - c, 2) + Math.pow(b - d, 2));
 
-                        // Transform input data using standardScaler
-                        double[] normalized;
-                        normalized = new double[]{(a - MEAN_A) / VAR_A, (b - MEAN_B) / VAR_B, (pixelSpeed - MEAN_P) / VAR_P};
-                        // Get output tensor (predicted_speed_function)
-                        float predictedSpeed = predictSpeed(normalized);
+                        double[] input_data = {a, b, pixelSpeed};
 
+                        // Get output tensor (predicted_speed_function)
+                        float predictedSpeed = predictSpeed(input_data, false)*10;
+                        int speed = (int) predictedSpeed;
                         // Draw lines and circles
                         Imgproc.line(mask, newPt, oldPt, new Scalar(255, 0, 0), 2);
                         Imgproc.circle(mask, newPt, 5, new Scalar(255, 0, 0), -1);
                         // Draw label text
                         Imgproc.putText(frame,
-                                String.format("%.2f", predictedSpeed),
+                                Float.toString((float) speed /10),
                                 newPt,
                                 Imgproc.FONT_HERSHEY_PLAIN,
                                 4.5*imW/1920,
-                                new Scalar(0, 0, 255),
+                                speedColor,
                                 6*imW/1920);
 
                         int lane = getLane((int) newPt.x, (int) newPt.y);
                         Imgproc.putText(frame,
-                                String.format("%.2f", predictedSpeed),
+                                Float.toString((float) speed /10),
                                 new Point(lane * 0.208 * imW, 55),
                                 Imgproc.FONT_HERSHEY_PLAIN,
                                 4.5*imW/1920,
-                                new Scalar(0, 0, 255),
+                                speedColor,
                                 6*imW/1920);
 
                     }
@@ -528,7 +548,7 @@ public class MainActivity extends AppCompatActivity {
                 int x2 = (int) ((xCenter + w / 2) * imW);
                 int y2 = (int) ((yCenter + h / 2) * imH);
 
-                Imgproc.rectangle(frame, new Point(x1, y1), new Point(x2, y2), new Scalar(10, 255, 0), 2);
+                Imgproc.rectangle(frame, new Point(x1, y1), new Point(x2, y2), speedColor, 2);
             }
 
             MainActivity.prevGray = frameGray.clone();
@@ -560,13 +580,43 @@ public class MainActivity extends AppCompatActivity {
 
         return byteBuffer;
     }
-    private static float predictSpeed(double[] inputData) {
-        speedInputFeature.loadBuffer(doubleToByteBuffer(inputData));
+    private static float predictSpeed(double[] inputData, boolean sideView) {
+        if (sideView){
+            double MEAN_A = 936.88328756;
+            double MEAN_B = 256.01818182;
+            double MEAN_P = 36.73230519;
+            double VAR_A = 255.618194466;
+            double VAR_B = 111.727442858;
+            double VAR_P = 634.69753378;
+            double[] normalized;
+            normalized = new double[]{(inputData[0] - MEAN_A) / VAR_A,
+                    (inputData[1] - MEAN_B) / VAR_B,
+                    (inputData[2] - MEAN_P) / VAR_P};
+            sideSpeedInputFeature.loadBuffer(doubleToByteBuffer(normalized));
 
-        // Runs model inference and gets result.
-        SpeedPredictionModel.Outputs outputs = speedPredictionModel.process(speedInputFeature);
-        TensorBuffer outputFeature0 = outputs.getOutputFeature0AsTensorBuffer();
-        return outputFeature0.getFloatValue(0);
+            // Runs model inference and gets result.
+            SpeedPredictionModelSideView.Outputs outputs = speedPredictionModelSideView.process(sideSpeedInputFeature);
+            TensorBuffer outputFeature0 = outputs.getOutputFeature0AsTensorBuffer();
+            return outputFeature0.getFloatValue(0);
+        }
+        else {
+            double MEAN_A = 936.88328756;
+            double MEAN_B = 617.87426442;
+            double MEAN_P = 42.33951691;
+            double VAR_A = 550.843393004;
+            double VAR_B = 322.851840306;
+            double VAR_P = 26.414411479;
+            double[] normalized;
+            normalized = new double[]{(inputData[0] - MEAN_A) / VAR_A,
+                    (inputData[1] - MEAN_B) / VAR_B,
+                    (inputData[2] - MEAN_P) / VAR_P};
+            speedInputFeature.loadBuffer(doubleToByteBuffer(normalized));
+
+            // Runs model inference and gets result.
+            SpeedPredictionModel.Outputs outputs = speedPredictionModel.process(speedInputFeature);
+            TensorBuffer outputFeature0 = outputs.getOutputFeature0AsTensorBuffer();
+            return outputFeature0.getFloatValue(0);
+        }
     }
 
     public static ByteBuffer matToByteBuffer(Mat mat) {

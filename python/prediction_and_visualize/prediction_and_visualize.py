@@ -249,6 +249,112 @@ def predict_and_visualize(
     return X, Y
 
 
+def predict_and_visualize2(
+    in_video_path, out_video_path,
+    speed_model_path, verbose=0,
+    min_pixel_speed=15,
+):
+
+    cap = cv2.VideoCapture(in_video_path)
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Specify the codec
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    out = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
+
+    # Load the TensorFlow Lite model.
+    si, sid, sod = load_tflite_model(speed_model_path)
+
+    sc = load('../../models/std_scaler_side_view.bin')
+
+    # Create an instance of the Lucas-Kanade optical flow algorithm
+    lk_params = dict(
+        winSize=(100, 40),
+        maxLevel=5,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+    )
+
+    prev_gray = None
+    prev_pts = None
+    frame_num = 0
+    while (True):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_num += 1
+        imH, imW, _ = frame.shape
+
+        # Convert the frame to grayscale for optflow calculation
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        if frame_num > 2:
+            prev_pts = cv2.goodFeaturesToTrack(
+                prev_gray, 200, 0.3, 5, blockSize=7,
+                useHarrisDetector=False, k=0.04)
+            
+            # Calculate optical flow using Lucas-Kanade method
+            next_pts, _, _ = cv2.calcOpticalFlowPyrLK(
+                prev_gray, frame_gray,
+                prev_pts, None, **lk_params
+            )
+
+            # Draw the tracks
+            sum_pixel_speed = 0
+            cnt = 0
+            for (new, old) in zip(next_pts, prev_pts):
+                a, b = new.ravel().astype(int)
+                c, d = old.ravel().astype(int)
+                pixel_speed = ((a-c)**2 + (b-d)**2)**0.5
+                if pixel_speed < min_pixel_speed:
+                    continue
+
+                sum_pixel_speed += pixel_speed
+                cnt += 1
+
+            if cnt > 0:
+                # Prepare input data (example).
+                input_data = np.array(
+                    sc.transform([[a, b, sum_pixel_speed/cnt]]),
+                    dtype=np.float32
+                )
+
+                # Set input tensor.
+                si.set_tensor(
+                    sid[0]['index'], input_data)
+
+                # Run inference.
+                si.invoke()
+
+                # Get output tensor.
+                predicted_speed = si.get_tensor(
+                    sod[0]['index'])[0][0]
+            else:
+                predicted_speed = 0.0
+
+            cv2.putText(
+                frame,
+                str(predicted_speed)[:4],
+                (int(imW/2), 65),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.5,
+                (0, 0, 255),
+                4,
+            )  # Draw label text
+
+        prev_gray = frame_gray.copy()
+
+        frame2 = cv2.resize(frame, (690, 540))
+        cv2.imshow('output', frame2)
+        out.write(frame)
+        if (cv2.waitKey(50) & 0xFF == ord('q')):
+            break
+
+    cap.release()
+
+    return
+
+
 def save_data_in_file(X, Y, path='../../data/data2.csv'):
     # Define field names (column headers)
     field_names = [
@@ -305,5 +411,21 @@ def main():
     save_data_in_file(X, y)
 
 
+def main_side():
+    in_video_path = '../../data/sideView/CitroenC4Picasso_80.mp4'
+    out_video_path = '../../data/out_side.mp4'
+
+    speed_prediction_model_path = '../../models/speed_prediction_model_side_view.tflite'
+
+    predict_and_visualize2(
+        in_video_path=in_video_path,
+        out_video_path=out_video_path,
+        speed_model_path=speed_prediction_model_path,
+        verbose=1,
+    )
+    print('\n prediction is completed!')
+
+
 if __name__ == "__main__":
-    main()
+    main_side()
+    # main()

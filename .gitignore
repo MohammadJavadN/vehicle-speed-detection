@@ -3,3 +3,6 @@
 /data/out.mp4
 android/python/out.mp4
 android/python/buildozer.spec
+/python/model
+data/sideView/
+data/out_side.mp4

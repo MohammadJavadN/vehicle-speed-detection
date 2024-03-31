@@ -1,5 +1,6 @@
 import cv2
 import csv
+import os
 import numpy as np
 from joblib import dump
 import tensorflow as tf
@@ -190,6 +191,92 @@ def extract_augmented_data(video_path, vehicles, modelpath, real_data_coef=50,
     return X, Y
 
 
+def extract_augmented_data2(
+        video_dir, real_speed, verbose=0,
+        min_pixel_speed=15):
+
+    # Create an instance of the Lucas-Kanade optical flow algorithm
+    lk_params = dict(
+        winSize=(15, 15),
+        maxLevel=0,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 150, 0.001)
+    )
+    X = []
+    Y = []
+
+    prev_gray = None
+    prev_pts = None
+
+    for file in os.listdir(video_dir):
+        if verbose:
+            print('file:', file)
+        if file.endswith(".mp4"):
+            video_path = os.path.join(video_dir, file)
+            if verbose:
+                print('video_path:', video_path)
+            real_speed = int(video_path.split('_')[-1].split('.')[0])
+            if verbose:
+                print('real_speed:', real_speed)
+            cap = cv2.VideoCapture(video_path)
+
+            frame_num = 0
+            while (True):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame_num += 1
+                imH, imW, _ = frame.shape
+
+                # Convert the frame to grayscale for optflow calculation
+                frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+                if frame_num > 2:
+                    prev_pts = cv2.goodFeaturesToTrack(
+                        prev_gray, 200, 0.3, 5, blockSize=7,
+                        useHarrisDetector=False, k=0.04)
+
+                    # Calculate optical flow using Lucas-Kanade method
+                    next_pts, _, _ = cv2.calcOpticalFlowPyrLK(
+                        prev_gray, frame_gray,
+                        prev_pts, None, **lk_params
+                    )
+
+                    sum_pixel_speed = 0
+                    cnt = 0
+                    for (new, old) in zip(next_pts, prev_pts):
+                        a, b = new.ravel().astype(int)
+                        c, d = old.ravel().astype(int)
+                        pixel_speed = ((a-c)**2 + (b-d)**2)**0.5
+                        if pixel_speed < min_pixel_speed:
+                            continue
+                        sum_pixel_speed += pixel_speed
+                        cnt += 1
+
+                    if cnt > 0:
+                        if (verbose):
+                            print('frame_num= ', frame_num, end=', ')
+                            print('speeds= ', real_speed, sum_pixel_speed/cnt)
+
+                        X.append((a, b, sum_pixel_speed/cnt))
+                        Y.append(real_speed)
+                prev_gray = frame_gray.copy()
+
+            cap.release()
+
+    # Agumenting with 0 speeds
+    for _ in range(50):
+        X.append(
+            (
+                np.random.randint(imW),
+                np.random.randint(imH),
+                0,
+            )
+        )
+        Y.append(0)
+
+    return X, Y
+
+
 def save_data_in_file(X, Y, path='../../data/data.csv'):
     # Define field names (column headers)
     field_names = ['x', 'y', 'pixel_speed', 'real_speed']
@@ -275,7 +362,7 @@ def main():
     video_path = '../../data/video.h264'
     license_plate_detector_model_path = '' +\
         '../../models/license_plate_detector_float32.tflite'
-    speed_prediction_model_path = '../../models/speed_prediction_model.tflite'
+    speed_prediction_model_path = '../../models/speed_prediction_model2.tflite'
 
     vehicles = parse_xml(xml_path)
     print('xml file was parsed successfully!\n')
@@ -302,5 +389,31 @@ def main():
     save_model(model, speed_prediction_model_path)
 
 
+# Main function
+def main_side():
+    video_dir = '../../data/sideView'
+    speed_prediction_model_path = '../../models/speed_prediction_model_side_view.tflite'
+
+    X, y = extract_augmented_data2(
+        video_dir=video_dir,
+        real_speed=80,
+        verbose=1,
+    )
+    print('\naugmented data extracted successfully!')
+
+    save_data_in_file(X, y, path="../../data/side_view_data.csv")
+
+    print('\ntraining model started...')
+
+    model, scaler = train(X, y)
+
+    dump(scaler, '../../models/std_scaler_side_view.bin', compress=True)
+
+    print('\nModel trained!')
+
+    save_model(model, speed_prediction_model_path)
+
+
 if __name__ == "__main__":
-    main()
+    # main()
+    main_side()

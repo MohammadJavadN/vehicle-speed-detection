@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.SurfaceView;
+import android.widget.Switch;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
@@ -27,10 +28,12 @@ import com.example.myapplication.ml.SpeedPredictionModel;
 import org.opencv.android.Utils;
 import org.opencv.core.MatOfByte;
 import org.opencv.core.MatOfFloat;
+import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.TermCriteria;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.video.Video;
+import org.opencv.videoio.VideoWriter;
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 
@@ -43,7 +46,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -62,10 +64,12 @@ import org.opencv.core.Size;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static String inVideoPath = "/sdcard/Download/out.mp4";
+    private static String inVideoPath = "/sdcard/Download/Video.mp4";
+    private static String outVideoPath = "/sdcard/Download/ou_.mp4";
     private static int maxFrames = 500;
 
     private static VideoCapture cap;
+    private static VideoWriter out;
 
     private static LicensePlateDetectorFloat32 plateDetectorModel;
     private static SpeedPredictionModel speedPredictionModel;
@@ -105,10 +109,15 @@ public class MainActivity extends AppCompatActivity {
                 new ActivityResultContracts.GetContent(),
                 o -> {
                     String path = getRealPathFromURI(MainActivity.this, o); // TODO: uncomment
-                    if(new File(Objects.requireNonNull(path)).exists())
+                    if (path == null)
+                        path = MainActivity.inVideoPath;
+                    if(new File(path).exists())
                         MainActivity.inVideoPath = path;
+                    String[] paths = MainActivity.inVideoPath.split("/");
+                    paths[paths.length-1] = "output.mp4";
+                    MainActivity.outVideoPath = String.join("/", paths);
                     Toast.makeText(getApplicationContext(),
-                            "path: " + path,
+                            "out_path: " + outVideoPath,
                             Toast.LENGTH_LONG).show();
 //                    MainActivity.inVideoPath = getRealPathFromURI(MainActivity.this, o); // TODO: uncomment
                     System.out.println(MainActivity.inVideoPath);
@@ -124,12 +133,20 @@ public class MainActivity extends AppCompatActivity {
 
     void getPermission(){
         if (ContextCompat.checkSelfPermission(MainActivity.this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(MainActivity.this,
+                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    PERMISSION_REQUEST_CODE);
+        }
+        if (ContextCompat.checkSelfPermission(MainActivity.this,
                 Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(MainActivity.this,
                     new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
                     PERMISSION_REQUEST_CODE);
         }
+
         else if (ContextCompat.checkSelfPermission(MainActivity.this,
                 Manifest.permission.READ_MEDIA_VIDEO)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -164,11 +181,28 @@ public class MainActivity extends AppCompatActivity {
     private void startUpdatingFrames() {
         MainActivity.cap = new VideoCapture();
         MainActivity.cap.open(MainActivity.inVideoPath);
+        int fourcc = VideoWriter.fourcc('m', 'p', '4', 'v');
+        double fps = MainActivity.cap.get(Videoio.CAP_PROP_FPS);
+        int width = (int) MainActivity.cap.get(Videoio.CAP_PROP_FRAME_WIDTH);
+        int height = (int) MainActivity.cap.get(Videoio.CAP_PROP_FRAME_HEIGHT);
+        MainActivity.out = new VideoWriter(MainActivity.outVideoPath, fourcc, fps, new Size(width, height));
+
         scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
         // Render the frame onto the canvas
         Runnable updateFrameTask = () -> {
-            Mat frame = predictAndVisualize();
+            Mat frame;
+            if (((Switch)(findViewById(R.id.plateSw))).isChecked())
+                frame = predictAndVisualize(); // TODO
+            else
+                frame = predictWithoutPlate();
+            System.out.println("activated:" + ((Switch)(findViewById(R.id.plateSw))).isChecked());
             if (frame != null) {
+                if (((Switch)(findViewById(R.id.saveSw))).isChecked())
+                    try {
+                        MainActivity.out.write(frame);
+                    } catch (Exception e) {
+                        System.out.println(e.toString());
+                    }
                 Canvas canvas = surfaceView.getHolder().lockCanvas();
                 if (canvas != null) {
                     // Render the frame onto the canvas
@@ -240,13 +274,7 @@ public class MainActivity extends AppCompatActivity {
         if (MainActivity.maxFrames == 0) {
             MainActivity.maxFrames = (int) MainActivity.cap.get(Videoio.CAP_PROP_FRAME_COUNT);
         }
-        /*
-        int fourcc = VideoWriter.fourcc('m', 'p', '4', 'v');
-        double fps = MainActivity.cap.get(Videoio.CAP_PROP_FPS);
-        int width = (int) MainActivity.cap.get(Videoio.CAP_PROP_FRAME_WIDTH);
-        int height = (int) MainActivity.cap.get(Videoio.CAP_PROP_FRAME_HEIGHT);
-        MainActivity.out = new VideoWriter(outVideoPath, fourcc, fps, new org.opencv.core.Size(width, height));
-        */
+
         try {
             plateDetectorModel = LicensePlateDetectorFloat32.newInstance(MainActivity.this);
             plateInputFeature = TensorBuffer.createFixedSize(new int[]{1, 640, 640, 3},
@@ -262,13 +290,122 @@ public class MainActivity extends AppCompatActivity {
             throw new RuntimeException(e);
         }
 
-        MainActivity.winSize = new Size(100, 40);
+        MainActivity.winSize = new Size(10, 10);
         MainActivity.criteria = new TermCriteria(TermCriteria.COUNT + TermCriteria.EPS,
-                10,
-                0.03);
+                200,
+                0.001);
         MainActivity.prevGray = null;
         MainActivity.prevPts = null;
         MainActivity.frameNum = 0;
+    }
+
+    public static Mat predictWithoutPlate() {
+        Mat frame = new Mat();
+        if (MainActivity.frameNum < MainActivity.maxFrames) {
+            boolean ret = cap.read(frame);
+            if (!ret) {
+                return null;
+            }
+
+            MainActivity.frameNum++;
+            imH = frame.rows();
+            imW = frame.cols();
+
+            Mat imageRgb = new Mat();
+            Imgproc.cvtColor(frame, imageRgb, Imgproc.COLOR_BGR2RGB);
+
+            Mat frameGray = new Mat();
+            Imgproc.cvtColor(frame, frameGray, Imgproc.COLOR_BGR2GRAY);
+
+
+            try {
+                if (MainActivity.frameNum > 2) {
+                    float[] laneSpeeds = {0, 0, 0, 0};
+                    int[] cntOfLaneSpeeds = {0, 0, 0, 0};
+
+                    MatOfPoint prevPtsMat_ = new MatOfPoint();
+
+                    Imgproc.goodFeaturesToTrack(MainActivity.prevGray, prevPtsMat_,100,0.3,7, new Mat(),7,false,0.04);
+
+                    MatOfPoint2f prevPtsMat = new MatOfPoint2f(prevPtsMat_.toArray());
+
+                    MatOfPoint2f nextPts = new MatOfPoint2f();
+                    // Calculate optical flow using Lucas-Kanade method
+                    MatOfByte status = new MatOfByte();
+                    MatOfFloat err = new MatOfFloat();
+                    Video.calcOpticalFlowPyrLK(
+                            MainActivity.prevGray, frameGray, prevPtsMat,
+                            nextPts, status, err, MainActivity.winSize,
+                            0, MainActivity.criteria);
+
+                    byte[] StatusArr = status.toArray();
+                    Point[] p0Arr = prevPtsMat.toArray();
+                    Point[] p1Arr = nextPts.toArray();
+                    Mat mask = Mat.zeros(frame.size(), CvType.CV_8UC3);
+
+                    for (int i = 0; i<StatusArr.length ; i++ ) {
+                        if (StatusArr[i] == 1) {
+                            Point newPt = p0Arr[i];
+
+                            Point oldPt = p1Arr[i];
+
+                            double a = newPt.x;
+                            double b = newPt.y;
+                            double c = oldPt.x;
+                            double d = oldPt.y;
+
+                            if (b < 0.33 * imH) {
+                                continue;
+                            }
+
+                            int lane = getLane((int) newPt.x, (int) newPt.y);
+
+                            double pixelSpeed = Math.sqrt(Math.pow(a - c, 2) + Math.pow(b - d, 2));
+
+                            // Transform input data using standardScaler
+                            double[] normalized;
+                            normalized = new double[]{(a - MEAN_A) / VAR_A, (b - MEAN_B) / VAR_B, (pixelSpeed - MEAN_P) / VAR_P};
+                            // Get output tensor (predicted_speed_function)
+                            float predictedSpeed = predictSpeed(normalized);
+                            if (pixelSpeed > 5) {
+                                laneSpeeds[lane - 1] += 1.3f * predictedSpeed;
+                                cntOfLaneSpeeds[lane - 1]++;
+                                Imgproc.line(mask, newPt, oldPt, new Scalar(255, 0, 0), 4 * imW / 1920);
+                                Imgproc.circle(mask, newPt, (5 * imW) / 1920, new Scalar(255, 0, 0), -1);
+                            }
+                        }
+                    }
+                    for (int lane = 0; lane < 4; lane++) {
+                        // Draw lines and circles
+                        // Get output tensor (predicted_speed_function)
+                        float speed = laneSpeeds[lane]/cntOfLaneSpeeds[lane];
+
+                        if (speed < 5)
+                            speed = 0;
+                        Imgproc.putText(frame,
+                                String.format("%.2f", speed),
+                                new Point((lane+1) * 0.208 * imW, 55),
+                                Imgproc.FONT_HERSHEY_PLAIN,
+                                4.5*imW/1920,
+                                new Scalar(0, 0, 255),
+                                6*imW/1920);
+
+                    }
+                    // Add mask to frame
+                    Core.add(frame, mask, frame);
+                }
+            }catch (Exception e){
+                System.out.println(e.toString());
+            }
+
+            MainActivity.prevGray = frameGray.clone();
+
+            // Return the processed frame
+            return frame;
+
+        }
+        return null;
+
     }
 
     public static Mat predictAndVisualize() {
@@ -282,7 +419,6 @@ public class MainActivity extends AppCompatActivity {
             MainActivity.frameNum++;
             imH = frame.rows();
             imW = frame.cols();
-            System.out.println("imW=" + imW + "imH=" + imH);
 
             Mat imageRgb = new Mat();
             Imgproc.cvtColor(frame, imageRgb, Imgproc.COLOR_BGR2RGB);
@@ -337,10 +473,6 @@ public class MainActivity extends AppCompatActivity {
 
                         double pixelSpeed = Math.sqrt(Math.pow(a - c, 2) + Math.pow(b - d, 2));
 
-                        // Prepare input data (example)
-                        Mat inputMat = Mat.zeros(1, 3, CvType.CV_32F);
-                        inputMat.put(0, 0, (float) a, (float) b, (float) pixelSpeed);
-
                         // Transform input data using standardScaler
                         double[] normalized;
                         normalized = new double[]{(a - MEAN_A) / VAR_A, (b - MEAN_B) / VAR_B, (pixelSpeed - MEAN_P) / VAR_P};
@@ -349,24 +481,24 @@ public class MainActivity extends AppCompatActivity {
 
                         // Draw lines and circles
                         Imgproc.line(mask, newPt, oldPt, new Scalar(255, 0, 0), 2);
-                        Imgproc.circle(frameGray, newPt, 5, new Scalar(255, 0, 0), -1);
+                        Imgproc.circle(mask, newPt, 5, new Scalar(255, 0, 0), -1);
                         // Draw label text
                         Imgproc.putText(frame,
                                 String.format("%.2f", predictedSpeed),
                                 newPt,
-                                Imgproc.FONT_HERSHEY_SIMPLEX,
-                                1.5,
+                                Imgproc.FONT_HERSHEY_PLAIN,
+                                4.5*imW/1920,
                                 new Scalar(0, 0, 255),
-                                4);
+                                6*imW/1920);
 
                         int lane = getLane((int) newPt.x, (int) newPt.y);
                         Imgproc.putText(frame,
                                 String.format("%.2f", predictedSpeed),
-                                new Point(lane * 0.208 * imW, 35),
-                                Imgproc.FONT_HERSHEY_SIMPLEX,
-                                1.5,
+                                new Point(lane * 0.208 * imW, 55),
+                                Imgproc.FONT_HERSHEY_PLAIN,
+                                4.5*imW/1920,
                                 new Scalar(0, 0, 255),
-                                4);
+                                6*imW/1920);
 
                     }
                     // Add mask to frame

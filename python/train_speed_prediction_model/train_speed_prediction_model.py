@@ -49,8 +49,9 @@ def parse_xml(xml_path):
     return vehicles
 
 
-def extract_augmented_data(video_path, vehicles, modelpath, real_data_coef=50,
-                           verbose=0, min_pixel_speed=15, max_frames=None):
+def extract_augmented_data_top_view_with_plate(
+        video_path, vehicles, modelpath, real_data_coef=50,
+        verbose=0, min_pixel_speed=15, max_frames=None):
 
     cap = cv2.VideoCapture(video_path)
     if not max_frames:
@@ -70,9 +71,9 @@ def extract_augmented_data(video_path, vehicles, modelpath, real_data_coef=50,
 
     # Create an instance of the Lucas-Kanade optical flow algorithm
     lk_params = dict(
-        winSize=(100, 40),
-        maxLevel=5,
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+        winSize=(15, 15),
+        maxLevel=0,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 0.001)
     )
 
     X = []
@@ -191,7 +192,113 @@ def extract_augmented_data(video_path, vehicles, modelpath, real_data_coef=50,
     return X, Y
 
 
-def extract_augmented_data2(
+def extract_augmented_data_top_view_no_plate(
+        video_path, vehicles, real_data_coef=50,
+        verbose=0, min_pixel_speed=15, max_frames=None):
+
+    cap = cv2.VideoCapture(video_path)
+    if not max_frames:
+        max_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Create an instance of the Lucas-Kanade optical flow algorithm
+    lk_params = dict(
+        winSize=(15, 15),
+        maxLevel=0,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 0.001)
+    )
+
+    X = []
+    Y = []
+
+    lane_speeds = {i: 0 for i in range(1, 4)}
+    last_update = {i: -10 for i in range(1, 4)}
+    prev_gray = None
+    prev_pts = None
+    frame_num = 0
+    while (frame_num < max_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_num += 1
+        imH, imW, _ = frame.shape
+
+        # Convert the frame to grayscale for optflow calculation
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        if frame_num > 2:
+            prev_pts = cv2.goodFeaturesToTrack(
+                prev_gray, 200, 0.3, 5, blockSize=7,
+                useHarrisDetector=False, k=0.04)
+
+            # Calculate optical flow using Lucas-Kanade method
+            next_pts, _, _ = cv2.calcOpticalFlowPyrLK(
+                prev_gray, frame_gray,
+                prev_pts, None, **lk_params
+            )
+
+            pixel_lane_speeds = [0, 0, 0, 0]
+            cnt_of_lane_speeds = [0, 0, 0, 0]
+
+            for (new, old) in zip(next_pts, prev_pts):
+                a, b = new.ravel().astype(int)
+                c, d = old.ravel().astype(int)
+                if (b < d or abs(a-c) > imW/100 or abs(b-d) > imH*0.14):
+                    continue
+                pixel_speed = ((a-c)**2 + (b-d)**2)**0.5
+                if pixel_speed < min_pixel_speed or b < 0.25 * imH:
+                    continue
+                lane = get_lane(a, b)
+                pixel_lane_speeds[lane-1] += pixel_speed
+                cnt_of_lane_speeds[lane-1] += 1
+
+            if frame_num in vehicles:
+                ((x, y, w, h), real_speed, lane) = vehicles[frame_num]
+                lane_speeds[lane] = real_speed
+                last_update[lane] = frame_num
+
+            for lane in range(1, 4):
+                if frame_num - last_update[lane] > 40:
+                    continue
+
+                if cnt_of_lane_speeds[lane-1] > 0:
+                    pixel_speed = pixel_lane_speeds[lane-1]\
+                        / cnt_of_lane_speeds[lane-1]
+                else:
+                    continue
+
+                real_speed = lane_speeds[lane]
+
+                if (verbose):
+                    print('frame_num= ', frame_num, end=', ')
+                    print('speeds= ', lane_speeds[lane], pixel_speed)
+
+                if frame_num in vehicles:
+                    for _ in range(real_data_coef):
+                        X.append((a, b, pixel_speed))
+                        Y.append(real_speed)
+                else:
+                    X.append((a, b, pixel_speed))
+                    Y.append(real_speed)
+
+        prev_gray = frame_gray.copy()
+
+    cap.release()
+
+    # Agumenting with 0 speeds
+    for _ in range(50):
+        X.append(
+            (
+                np.random.randint(imW),
+                np.random.randint(imH),
+                0,
+            )
+        )
+        Y.append(0)
+
+    return X, Y
+
+
+def extract_augmented_data_side_view_no_plate(
         video_dir, real_speed, verbose=0,
         min_pixel_speed=15):
 
@@ -199,8 +306,9 @@ def extract_augmented_data2(
     lk_params = dict(
         winSize=(15, 15),
         maxLevel=0,
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 150, 0.001)
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 0.001)
     )
+
     X = []
     Y = []
 
@@ -357,17 +465,18 @@ def save_model(model, model_path):
 
 
 # Main function
-def main():
+def main_top_with_plate():
     xml_path = '../../data/vehicles.xml'
     video_path = '../../data/video.h264'
     license_plate_detector_model_path = '' +\
         '../../models/license_plate_detector_float32.tflite'
-    speed_prediction_model_path = '../../models/speed_prediction_model2.tflite'
+    speed_prediction_model_path = '../../models/' + \
+        'speed_prediction_top_view_model.tflite'
 
     vehicles = parse_xml(xml_path)
     print('xml file was parsed successfully!\n')
 
-    X, y = extract_augmented_data(
+    X, y = extract_augmented_data_top_view_with_plate(
         video_path=video_path,
         vehicles=vehicles,
         modelpath=license_plate_detector_model_path,
@@ -376,7 +485,7 @@ def main():
     )
     print('\naugmented data extracted successfully!')
 
-    save_data_in_file(X, y)
+    save_data_in_file(X, y, path="../../data/top_view_data.csv")
 
     print('\ntraining model started...')
 
@@ -390,18 +499,53 @@ def main():
 
 
 # Main function
-def main_side():
-    video_dir = '../../data/sideView'
-    speed_prediction_model_path = '../../models/speed_prediction_model_side_view.tflite'
+def main_top_no_plate():
+    xml_path = '../../data/vehicles.xml'
+    video_path = '../../data/video.h264'
+    speed_prediction_model_path = '../../models/' + \
+        'speed_prediction_top_view_no_plate_model.tflite'
 
-    X, y = extract_augmented_data2(
+    vehicles = parse_xml(xml_path)
+    print('xml file was parsed successfully!\n')
+
+    X, y = extract_augmented_data_top_view_no_plate(
+        video_path=video_path,
+        vehicles=vehicles,
+        max_frames=5000,
+        verbose=1,
+    )
+    print('\naugmented data extracted successfully!')
+
+    save_data_in_file(X, y, path="../../data/top_view_no_plate_data.csv")
+
+    print('\ntraining model started...')
+
+    model, scaler = train(X, y)
+
+    dump(
+        scaler, '../../models/std_scaler_top_view_no_plate.bin',
+        compress=True,
+    )
+
+    print('\nModel trained!')
+
+    save_model(model, speed_prediction_model_path)
+
+
+# Main function
+def main_side_no_plate():
+    video_dir = '../../data/sideView'
+    speed_prediction_model_path = '../../models/' +\
+        'speed_prediction_side_view_no_plate_model.tflite'
+
+    X, y = extract_augmented_data_side_view_no_plate(
         video_dir=video_dir,
         real_speed=80,
         verbose=1,
     )
     print('\naugmented data extracted successfully!')
 
-    save_data_in_file(X, y, path="../../data/side_view_data.csv")
+    save_data_in_file(X, y, path="../../data/side_view_no_plate_data.csv")
 
     print('\ntraining model started...')
 
@@ -416,4 +560,5 @@ def main_side():
 
 if __name__ == "__main__":
     # main()
-    main_side()
+    # main_side_no_plate()
+    main_top_no_plate()

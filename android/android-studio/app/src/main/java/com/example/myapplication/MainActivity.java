@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat;
 import com.example.myapplication.ml.LicensePlateDetectorFloat32;
 import com.example.myapplication.ml.SpeedPredictionModel;
 import com.example.myapplication.ml.SpeedPredictionModelSideView;
+import com.example.myapplication.ml.SpeedPredictionTopViewNoPlateModel;
 
 import org.opencv.android.Utils;
 import org.opencv.core.MatOfByte;
@@ -71,13 +72,15 @@ public class MainActivity extends AppCompatActivity {
 
     private static VideoCapture cap;
     private static VideoWriter out;
-    private static Scalar speedColor = new Scalar(255,0,0);
+    private static final Scalar speedColor = new Scalar(255,0,0);
 
     private static LicensePlateDetectorFloat32 plateDetectorModel;
+    private static SpeedPredictionTopViewNoPlateModel speedPredictionTopViewNoPlateModel;
     private static SpeedPredictionModel speedPredictionModel;
     private static SpeedPredictionModelSideView speedPredictionModelSideView;
     private static TensorBuffer plateInputFeature;
-    private static TensorBuffer speedInputFeature;
+    private static TensorBuffer topSpeedInputFeature1;
+    private static TensorBuffer topSpeedInputFeature2;
     private static TensorBuffer sideSpeedInputFeature;
     private static int height, width;
     private static Mat prevGray;
@@ -283,8 +286,10 @@ public class MainActivity extends AppCompatActivity {
             MainActivity.width = 640;
 
             speedPredictionModel = SpeedPredictionModel.newInstance(MainActivity.this);
-            // Creates inputs for reference.
-            speedInputFeature = TensorBuffer.createFixedSize(new int[]{1, 3}, DataType.FLOAT32);
+            topSpeedInputFeature1 = TensorBuffer.createFixedSize(new int[]{1, 3}, DataType.FLOAT32);
+
+            speedPredictionTopViewNoPlateModel = SpeedPredictionTopViewNoPlateModel.newInstance(MainActivity.this);
+            topSpeedInputFeature2 = TensorBuffer.createFixedSize(new int[]{1, 3}, DataType.FLOAT32);
 
             speedPredictionModelSideView = SpeedPredictionModelSideView.newInstance(MainActivity.this);
             sideSpeedInputFeature = TensorBuffer.createFixedSize(new int[]{1, 3}, DataType.FLOAT32);
@@ -368,7 +373,7 @@ public class MainActivity extends AppCompatActivity {
                             double[] input_data = {a, b, pixelSpeed};
 
                             // Get output tensor (predicted_speed_function)
-                            float predictedSpeed = predictSpeed(input_data, sideView);
+                            float predictedSpeed = predictSpeedNoPlate(input_data, sideView);
                             if (pixelSpeed > 15) {
                                 if (!sideView){
                                     predictedSpeed = 1.3f * predictedSpeed;
@@ -497,7 +502,7 @@ public class MainActivity extends AppCompatActivity {
                         double[] input_data = {a, b, pixelSpeed};
 
                         // Get output tensor (predicted_speed_function)
-                        float predictedSpeed = predictSpeed(input_data, false)*10;
+                        float predictedSpeed = predictSpeedWithPlate(input_data, false)*10;
                         int speed = (int) predictedSpeed;
                         // Draw lines and circles
                         Imgproc.line(mask, newPt, oldPt, new Scalar(255, 0, 0), 2);
@@ -580,7 +585,46 @@ public class MainActivity extends AppCompatActivity {
 
         return byteBuffer;
     }
-    private static float predictSpeed(double[] inputData, boolean sideView) {
+    private static float predictSpeedNoPlate(double[] inputData, boolean sideView) {
+        if (sideView){
+            double MEAN_A = 936.88328756;
+            double MEAN_B = 256.01818182;
+            double MEAN_P = 36.73230519;
+            double VAR_A = 255.618194466;
+            double VAR_B = 111.727442858;
+            double VAR_P = 634.69753378;
+            double[] normalized;
+            normalized = new double[]{(inputData[0] - MEAN_A) / VAR_A,
+                    (inputData[1] - MEAN_B) / VAR_B,
+                    (inputData[2] - MEAN_P) / VAR_P};
+            sideSpeedInputFeature.loadBuffer(doubleToByteBuffer(normalized));
+
+            // Runs model inference and gets result.
+            SpeedPredictionModelSideView.Outputs outputs = speedPredictionModelSideView.process(sideSpeedInputFeature);
+            TensorBuffer outputFeature0 = outputs.getOutputFeature0AsTensorBuffer();
+            return outputFeature0.getFloatValue(0);
+        }
+        else {
+            double MEAN_A = 917.25111607;
+            double MEAN_B = 393.7375372;
+            double MEAN_P = 48.96527362;
+            double VAR_A = 516.638571083;
+            double VAR_B = 299.871522795;
+            double VAR_P = 26.931929277;
+            double[] normalized;
+            normalized = new double[]{(inputData[0] - MEAN_A) / VAR_A,
+                    (inputData[1] - MEAN_B) / VAR_B,
+                    (inputData[2] - MEAN_P) / VAR_P};
+            topSpeedInputFeature2.loadBuffer(doubleToByteBuffer(normalized));
+
+            // Runs model inference and gets result.
+            SpeedPredictionTopViewNoPlateModel.Outputs outputs = speedPredictionTopViewNoPlateModel.process(topSpeedInputFeature2);
+            TensorBuffer outputFeature0 = outputs.getOutputFeature0AsTensorBuffer();
+            return outputFeature0.getFloatValue(0);
+        }
+    }
+
+    private static float predictSpeedWithPlate(double[] inputData, boolean sideView) {
         if (sideView){
             double MEAN_A = 936.88328756;
             double MEAN_B = 256.01818182;
@@ -610,10 +654,10 @@ public class MainActivity extends AppCompatActivity {
             normalized = new double[]{(inputData[0] - MEAN_A) / VAR_A,
                     (inputData[1] - MEAN_B) / VAR_B,
                     (inputData[2] - MEAN_P) / VAR_P};
-            speedInputFeature.loadBuffer(doubleToByteBuffer(normalized));
+            topSpeedInputFeature1.loadBuffer(doubleToByteBuffer(normalized));
 
             // Runs model inference and gets result.
-            SpeedPredictionModel.Outputs outputs = speedPredictionModel.process(speedInputFeature);
+            SpeedPredictionModel.Outputs outputs = speedPredictionModel.process(topSpeedInputFeature1);
             TensorBuffer outputFeature0 = outputs.getOutputFeature0AsTensorBuffer();
             return outputFeature0.getFloatValue(0);
         }

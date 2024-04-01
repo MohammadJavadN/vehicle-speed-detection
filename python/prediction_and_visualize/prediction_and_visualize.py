@@ -50,7 +50,7 @@ def load_tflite_model(path):
     return interpreter, input_details, output_details
 
 
-def predict_and_visualize(
+def predict_and_visualize_top_view_with_plate(
     in_video_path, out_video_path, vehicles, plate_model_path,
     speed_model_path, real_data_coef=50, verbose=0,
     min_pixel_speed=15, max_frames=None
@@ -80,9 +80,9 @@ def predict_and_visualize(
 
     # Create an instance of the Lucas-Kanade optical flow algorithm
     lk_params = dict(
-        winSize=(100, 40),
-        maxLevel=5,
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+        winSize=(15, 15),
+        maxLevel=0,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 0.001)
     )
 
     X = []
@@ -249,7 +249,127 @@ def predict_and_visualize(
     return X, Y
 
 
-def predict_and_visualize2(
+def spredict_and_visualize_top_view_no_plate(
+    in_video_path, out_video_path,
+    speed_model_path, verbose=0,
+    min_pixel_speed=15,
+):
+
+    cap = cv2.VideoCapture(in_video_path)
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Specify the codec
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    out = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
+
+    # Load the TensorFlow Lite model.
+    si, sid, sod = load_tflite_model(speed_model_path)
+
+    sc = load('../../models/std_scaler_top_view_no_plate.bin')
+
+    # Create an instance of the Lucas-Kanade optical flow algorithm
+    lk_params = dict(
+        winSize=(15, 15),
+        maxLevel=0,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 0.001)
+    )
+
+    prev_gray = None
+    prev_pts = None
+    frame_num = 0
+    while (True):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_num += 1
+        imH, imW, _ = frame.shape
+
+        # Convert the frame to grayscale for optflow calculation
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        if frame_num > 2:
+            prev_pts = cv2.goodFeaturesToTrack(
+                prev_gray, 200, 0.3, 5, blockSize=7,
+                useHarrisDetector=False, k=0.04)
+
+            # Calculate optical flow using Lucas-Kanade method
+            next_pts, _, _ = cv2.calcOpticalFlowPyrLK(
+                prev_gray, frame_gray,
+                prev_pts, None, **lk_params
+            )
+
+            pixel_lane_speeds = [0, 0, 0, 0]
+            cnt_of_lane_speeds = [0, 0, 0, 0]
+
+            for (new, old) in zip(next_pts, prev_pts):
+                a, b = new.ravel().astype(int)
+                c, d = old.ravel().astype(int)
+                if (b < d or abs(a-c) > imW/100 or abs(b-d) > imH*0.14):
+                    continue
+                pixel_speed = ((a-c)**2 + (b-d)**2)**0.5
+                if pixel_speed < min_pixel_speed or b < 0.25 * imH:
+                    continue
+                lane = get_lane(a, b)
+                pixel_lane_speeds[lane-1] += pixel_speed
+                cnt_of_lane_speeds[lane-1] += 1
+
+            for lane in range(1, 4):
+                if cnt_of_lane_speeds[lane-1] > 0:
+                    pixel_speed = pixel_lane_speeds[lane-1]\
+                        / cnt_of_lane_speeds[lane-1]
+                else:
+                    pixel_speed = 0
+
+                # Prepare input data (example).
+                input_data = np.array(
+                    sc.transform([[a, b, pixel_speed]]),
+                    dtype=np.float32
+                )
+
+                # Set input tensor.
+                si.set_tensor(
+                    sid[0]['index'], input_data)
+
+                # Run inference.
+                si.invoke()
+
+                # Get output tensor.
+                predicted_speed = si.get_tensor(
+                    sod[0]['index']
+                )[0][0]
+
+                if predicted_speed < 10:
+                    predicted_speed = 0
+
+                if (verbose):
+                    print('frame_num= ', frame_num, end=', ')
+                    print('speeds= ', predicted_speed, pixel_speed)
+
+                cv2.putText(
+                    frame,
+                    str(predicted_speed)[:4],
+                    (int(lane*imW*0.208), 65),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.5,
+                    (0, 0, 255),
+                    4,
+                )  # Draw label text
+
+        prev_gray = frame_gray.copy()
+
+        frame2 = cv2.resize(frame, (690, 540))
+        cv2.imshow('output', frame2)
+        out.write(frame)
+        if (cv2.waitKey(1) & 0xFF == ord('q')):
+            break
+
+    cap.release()
+
+    return
+
+
+def spredict_and_visualize_side_view_no_plate(
     in_video_path, out_video_path,
     speed_model_path, verbose=0,
     min_pixel_speed=15,
@@ -270,9 +390,9 @@ def predict_and_visualize2(
 
     # Create an instance of the Lucas-Kanade optical flow algorithm
     lk_params = dict(
-        winSize=(100, 40),
-        maxLevel=5,
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+        winSize=(15, 15),
+        maxLevel=0,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 0.001)
     )
 
     prev_gray = None
@@ -292,7 +412,7 @@ def predict_and_visualize2(
             prev_pts = cv2.goodFeaturesToTrack(
                 prev_gray, 200, 0.3, 5, blockSize=7,
                 useHarrisDetector=False, k=0.04)
-            
+
             # Calculate optical flow using Lucas-Kanade method
             next_pts, _, _ = cv2.calcOpticalFlowPyrLK(
                 prev_gray, frame_gray,
@@ -386,18 +506,19 @@ def save_data_in_file(X, Y, path='../../data/data2.csv'):
 
 
 # Main function
-def main():
+def main_top_with_plate():
     xml_path = '../../data/vehicles.xml'
     in_video_path = '../../data/video.h264'
-    out_video_path = '../../data/out.mp4'
+    out_video_path = '../../data/out_top_with_plate.mp4'
     license_plate_detector_model_path = '' +\
         '../../models/license_plate_detector_float32.tflite'
-    speed_prediction_model_path = '../../models/speed_prediction_model.tflite'
+    speed_prediction_model_path = '../../models/' + \
+        'speed_prediction_top_view_model.tflite'
 
     vehicles = parse_xml(xml_path)
     print('xml file was parsed successfully!\n')
 
-    X, y = predict_and_visualize(
+    X, y = predict_and_visualize_top_view_with_plate(
         in_video_path=in_video_path,
         out_video_path=out_video_path,
         vehicles=vehicles,
@@ -411,13 +532,32 @@ def main():
     save_data_in_file(X, y)
 
 
-def main_side():
+# Main function
+def main_top_no_plate():
+    in_video_path = '../../data/video.h264'
+    out_video_path = '../../data/out_top_no_plate.mp4'
+    speed_prediction_model_path = '../../models/' + \
+        'speed_prediction_top_view_no_plate_model.tflite'
+
+    print('xml file was parsed successfully!\n')
+
+    spredict_and_visualize_top_view_no_plate(
+        in_video_path=in_video_path,
+        out_video_path=out_video_path,
+        speed_model_path=speed_prediction_model_path,
+        verbose=1,
+    )
+    print('\n prediction is completed!')
+
+
+def main_side_no_plate():
     in_video_path = '../../data/sideView/CitroenC4Picasso_80.mp4'
-    out_video_path = '../../data/out_side.mp4'
+    out_video_path = '../../data/out_side_no_plate.mp4'
 
-    speed_prediction_model_path = '../../models/speed_prediction_model_side_view.tflite'
+    speed_prediction_model_path = '../../models/' +\
+        'speed_prediction_side_view_no_plate_model.tflite'
 
-    predict_and_visualize2(
+    spredict_and_visualize_side_view_no_plate(
         in_video_path=in_video_path,
         out_video_path=out_video_path,
         speed_model_path=speed_prediction_model_path,
@@ -427,5 +567,6 @@ def main_side():
 
 
 if __name__ == "__main__":
-    main_side()
+    main_top_no_plate()
+    # main_side_no_plate()
     # main()

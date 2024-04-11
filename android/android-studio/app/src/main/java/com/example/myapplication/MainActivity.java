@@ -1,5 +1,7 @@
 package com.example.myapplication;
 
+import static java.lang.Math.abs;
+
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -66,7 +68,8 @@ import org.opencv.core.Size;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static String inVideoPath = "/sdcard/Download/Video.mp4";
+    public static final String TAG = "ObjectDetector";
+    private static String inVideoPath = "/sdcard/Download/video.mp4";
     private static String outVideoPath = "/sdcard/Download/ou_.mp4";
     private static int maxFrames = 500;
 
@@ -180,6 +183,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startUpdatingFrames() {
+        // Release resources
+        if (MainActivity.cap != null && MainActivity.cap.isOpened())
+            MainActivity.cap.release();
+        if (MainActivity.out != null && MainActivity.out.isOpened())
+            MainActivity.out.release();
+
         MainActivity.cap = new VideoCapture();
         MainActivity.cap.open(MainActivity.inVideoPath);
         int fourcc = VideoWriter.fourcc('m', 'p', '4', 'v');
@@ -203,6 +212,10 @@ public class MainActivity extends AppCompatActivity {
                         MainActivity.out.write(frame);
                     } catch (Exception e) {
                         System.out.println(e.toString());
+                        ((Switch)(findViewById(R.id.saveSw))).setChecked(false);
+                        Toast.makeText(getApplicationContext(),
+                                "failed to save output",
+                                Toast.LENGTH_LONG).show();
                     }
                 Canvas canvas = surfaceView.getHolder().lockCanvas();
                 if (canvas != null) {
@@ -333,7 +346,7 @@ public class MainActivity extends AppCompatActivity {
 
                     MatOfPoint prevPtsMat_ = new MatOfPoint();
 
-                    Imgproc.goodFeaturesToTrack(MainActivity.prevGray, prevPtsMat_,150,0.3,5, new Mat(),7,false,0.04);
+                    Imgproc.goodFeaturesToTrack(MainActivity.prevGray, prevPtsMat_,150,0.1,5, new Mat(),7,false,0.04);
 
                     MatOfPoint2f prevPtsMat = new MatOfPoint2f(prevPtsMat_.toArray());
 
@@ -362,9 +375,8 @@ public class MainActivity extends AppCompatActivity {
                             double c = oldPt.x;
                             double d = oldPt.y;
 
-                            if (b < 0.33 * imH) {
+                            if (b < 0.25 * imH || d < b || abs(a-c) > (double) imW /100 || abs(b-d) > imH*0.14)
                                 continue;
-                            }
 
                             int lane = getLane((int) newPt.x, (int) newPt.y);
 
@@ -376,7 +388,7 @@ public class MainActivity extends AppCompatActivity {
                             float predictedSpeed = predictSpeedNoPlate(input_data, sideView);
                             if (pixelSpeed > 15) {
                                 if (!sideView){
-                                    predictedSpeed = 1.3f * predictedSpeed;
+                                    predictedSpeed = (float) (predictedSpeed*Math.pow(1920/imW, 0.08)*1.2);
                                     laneSpeeds[lane - 1] += predictedSpeed;
                                     cntOfLaneSpeeds[lane - 1]++;
                                 } else {

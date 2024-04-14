@@ -3,6 +3,7 @@ package com.example.myapplication;
 import static java.lang.Math.abs;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -13,7 +14,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.view.MotionEvent;
 import android.view.SurfaceView;
+import android.view.View;
 import android.widget.Switch;
 import android.widget.Toast;
 
@@ -29,7 +32,6 @@ import com.example.myapplication.ml.SpeedPredictionModel;
 import com.example.myapplication.ml.SpeedPredictionModelSideView;
 import com.example.myapplication.ml.SpeedPredictionTopViewNoPlateModel;
 
-import org.opencv.android.Utils;
 import org.opencv.core.MatOfByte;
 import org.opencv.core.MatOfFloat;
 import org.opencv.core.MatOfPoint;
@@ -38,11 +40,9 @@ import org.opencv.core.TermCriteria;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.video.Video;
 import org.opencv.videoio.VideoWriter;
-import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -66,10 +66,11 @@ import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements View.OnTouchListener {
 
     public static final String TAG = "ObjectDetector";
-    private static String inVideoPath = "/sdcard/Download/video.mp4";
+    private static Detector detector;
+    private static String inVideoPath = "/sdcard/Download/video(1).mp4";
     private static String outVideoPath = "/sdcard/Download/ou_.mp4";
     private static int maxFrames = 500;
 
@@ -96,8 +97,10 @@ public class MainActivity extends AppCompatActivity {
     private static int imH;
 
     ActivityResultLauncher<String> filechoser;
-    SurfaceView surfaceView;
+    public static SurfaceView surfaceView;
     private ScheduledExecutorService scheduledExecutorService;
+    private View circle1, circle2, circle3, circle4;
+    private VideoProcess videoProcess;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -127,12 +130,29 @@ public class MainActivity extends AppCompatActivity {
                     System.out.println(MainActivity.inVideoPath);
 
                     // Start updating frames periodically
-                    startUpdatingFrames();
+//                    startUpdatingFrames();
+                    startDetectionProcess();
                 }
         );
 
+        circle1 = findViewById(R.id.circle1);
+        circle2 = findViewById(R.id.circle2);
+        circle3 = findViewById(R.id.circle3);
+        circle4 = findViewById(R.id.circle4);
+
+        circle1.setOnTouchListener(this);
+        circle2.setOnTouchListener(this);
+        circle3.setOnTouchListener(this);
+        circle4.setOnTouchListener(this);
     }
 
+    @SuppressLint("ClickableViewAccessibility")
+    @Override
+    public boolean onTouch(View v, MotionEvent event) {
+        if (event.getAction() == MotionEvent.ACTION_MOVE)
+            videoProcess.roadLine.movePoint(v, event, surfaceView);
+        return true;
+    }
     private static final int PERMISSION_REQUEST_CODE = 100;
 
     void getPermission(){
@@ -182,6 +202,34 @@ public class MainActivity extends AppCompatActivity {
         return filePath;
     }
 
+    private void startDetectionProcess() {
+//        if (scheduledExecutorService != null)
+//            scheduledExecutorService.shutdown();
+        scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+        try {
+            videoProcess = new VideoProcess(inVideoPath, surfaceView, detector, outVideoPath);
+            videoProcess.roadLine.setParameters(circle1, circle2, circle3, circle4, videoProcess);
+        } catch (Exception e){
+            System.out.println("### new VideoProcess():" + e.toString());
+        }
+        // Render the frame onto the canvas
+        Runnable updateFrameTask = () -> {
+            try {
+                if (!videoProcess.doProcessForNextFrame())
+                    onDestroy();
+            } catch (Exception e){
+                System.out.println("### videoProcess.doProcessForNextFrame():" + e.toString());
+            }
+        };
+
+        // Schedule the task to run every 33 milliseconds (30 frames per second)
+        scheduledExecutorService.scheduleAtFixedRate(
+                updateFrameTask,
+                0, // Initial delay
+                1, // Period (milliseconds)
+                TimeUnit.MILLISECONDS);
+    }
+
     private void startUpdatingFrames() {
         // Release resources
         if (MainActivity.cap != null && MainActivity.cap.isOpened())
@@ -225,7 +273,7 @@ public class MainActivity extends AppCompatActivity {
                     int h = canvas.getHeight();
                     Matrix matrix = new Matrix();
                     matrix.postRotate(90);
-                    Bitmap scaledBitmap = Bitmap.createScaledBitmap(matToBitmap(frame), h, w, false);
+                    Bitmap scaledBitmap = Bitmap.createScaledBitmap(ImageUtils.matToBitmap(frame), h, w, false);
                     Bitmap rotatedBitmap = Bitmap.createBitmap(scaledBitmap, 0, 0, h, w, matrix, true);
                     canvas.drawBitmap(rotatedBitmap, 0, 0, null);
                     surfaceView.getHolder().unlockCanvasAndPost(canvas);
@@ -256,12 +304,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public static Bitmap matToBitmap(Mat inputMat) {
-        System.out.println("%%%" + inputMat.cols() + inputMat.rows());
-        Bitmap outputBitmap = Bitmap.createBitmap(inputMat.cols(), inputMat.rows(), Bitmap.Config.ARGB_8888);
-        Utils.matToBitmap(inputMat, outputBitmap);
-        return outputBitmap;
-    }
 
     public void browseVideo(android.view.View view) {
         filechoser.launch("video/*");
@@ -287,10 +329,20 @@ public class MainActivity extends AppCompatActivity {
 
     public void init() {
         System.loadLibrary("opencv_java4");
+
+        // Initialize the detection model. detector1 for human and vehicle and detetor2 for face and license plate
+        detector = new Detector(
+                this,
+                "ssd_mobilenet_v1_ppn_shared_box_predictor_300x300_coco14_sync_2018_07_03.tflite",
+                "labelmap1.txt",
+                0.3f,
+                false
+        );
+
+/* in main branch
         if (MainActivity.maxFrames == 0) {
             MainActivity.maxFrames = (int) MainActivity.cap.get(Videoio.CAP_PROP_FRAME_COUNT);
         }
-
         try {
             plateDetectorModel = LicensePlateDetectorFloat32.newInstance(MainActivity.this);
             plateInputFeature = TensorBuffer.createFixedSize(new int[]{1, 640, 640, 3},
@@ -318,6 +370,7 @@ public class MainActivity extends AppCompatActivity {
         MainActivity.prevGray = null;
         MainActivity.prevPts = null;
         MainActivity.frameNum = 0;
+*/
     }
 
     public static Mat predictWithoutPlate(boolean sideView) {
@@ -597,6 +650,7 @@ public class MainActivity extends AppCompatActivity {
 
         return byteBuffer;
     }
+
     private static float predictSpeedNoPlate(double[] inputData, boolean sideView) {
         if (sideView){
             double MEAN_A = 936.88328756;
@@ -766,5 +820,3 @@ public class MainActivity extends AppCompatActivity {
 
     }
 }
-
-

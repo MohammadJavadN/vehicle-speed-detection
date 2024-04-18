@@ -31,6 +31,7 @@ import com.example.myapplication.ml.LicensePlateDetectorFloat32;
 import com.example.myapplication.ml.SpeedPredictionModel;
 import com.example.myapplication.ml.SpeedPredictionModelSideView;
 import com.example.myapplication.ml.SpeedPredictionTopViewNoPlateModel;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import org.opencv.core.MatOfByte;
 import org.opencv.core.MatOfFloat;
@@ -97,7 +98,7 @@ public class MainActivity extends AppCompatActivity implements View.OnTouchListe
     private static int imH;
 
     ActivityResultLauncher<String> filechoser;
-    public static SurfaceView surfaceView;
+    public SurfaceView surfaceView;
     private ScheduledExecutorService scheduledExecutorService;
     private View circle1, circle2, circle3, circle4;
     private VideoProcess videoProcess;
@@ -131,7 +132,7 @@ public class MainActivity extends AppCompatActivity implements View.OnTouchListe
 
                     // Start updating frames periodically
 //                    startUpdatingFrames();
-                    startDetectionProcess();
+                    initializeSurface();
                 }
         );
 
@@ -151,6 +152,8 @@ public class MainActivity extends AppCompatActivity implements View.OnTouchListe
     public boolean onTouch(View v, MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_MOVE)
             videoProcess.roadLine.movePoint(v, event, surfaceView);
+        if (videoProcess.show(true))
+            findViewById(R.id.floatingActionButton).setVisibility(View.VISIBLE);
         return true;
     }
     private static final int PERMISSION_REQUEST_CODE = 100;
@@ -202,16 +205,24 @@ public class MainActivity extends AppCompatActivity implements View.OnTouchListe
         return filePath;
     }
 
-    private void startDetectionProcess() {
-//        if (scheduledExecutorService != null)
-//            scheduledExecutorService.shutdown();
-        scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+    private void initializeSurface() {
         try {
+            surfaceView.getHolder().lockCanvas();
             videoProcess = new VideoProcess(inVideoPath, surfaceView, detector, outVideoPath);
-            videoProcess.roadLine.setParameters(circle1, circle2, circle3, circle4, videoProcess);
+            videoProcess.roadLine.initializeCircles(circle1, circle2, circle3, circle4, videoProcess);
+            if (videoProcess.show(true))
+                findViewById(R.id.floatingActionButton).setVisibility(View.VISIBLE);
+//            videoProcess.roadLine.drawLines(videoProcess.getFrameBitmap());
         } catch (Exception e){
             System.out.println("### new VideoProcess():" + e.toString());
         }
+    }
+    public void startDetectionProcess(android.view.View view) {
+//        if (scheduledExecutorService != null)
+//            scheduledExecutorService.shutdown();
+        findViewById(R.id.floatingActionButton).setVisibility(View.GONE);
+        scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+        videoProcess.roadLine.setVisible(View.GONE);
         // Render the frame onto the canvas
         Runnable updateFrameTask = () -> {
             try {
@@ -306,6 +317,9 @@ public class MainActivity extends AppCompatActivity implements View.OnTouchListe
 
 
     public void browseVideo(android.view.View view) {
+        if (scheduledExecutorService != null) {
+            scheduledExecutorService.shutdown();
+        }
         filechoser.launch("video/*");
     }
 
@@ -335,7 +349,7 @@ public class MainActivity extends AppCompatActivity implements View.OnTouchListe
                 this,
                 "ssd_mobilenet_v1_ppn_shared_box_predictor_300x300_coco14_sync_2018_07_03.tflite",
                 "labelmap1.txt",
-                0.3f,
+                0.5f,
                 false
         );
 

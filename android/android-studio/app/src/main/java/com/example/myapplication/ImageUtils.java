@@ -186,7 +186,7 @@ public class ImageUtils {
                     rectF2 = recognitionList.get(j).getLocation();
 
                     // if IOU > 0.3, merge the two rects
-                    if (calculateIOU2(rect1, rect2) > 0.3) {
+                    if (calculateIOU(rect1, rect2) > 0.3) {
                         recognitionList.get(i).setLocationInt(mergeTwoRects(rect1, rect2));
                         recognitionList.remove(j);
                         ifModify = true;
@@ -194,8 +194,8 @@ public class ImageUtils {
                     }
 
                     // if the rects are close to each other, merge them
-//                    if (isNear(imgHeight, imgWidth, rect1, rect2)) {
-                    if (isNear(rectF1, rectF2)) {
+                    if (isNear(imgHeight, imgWidth, rect1, rect2)) {
+//                    if (isNear(rectF1, rectF2)) {
                         recognitionList.get(i).setLocationInt(mergeTwoRects(rect1, rect2));
                         recognitionList.remove(j);
                         ifModify = true;
@@ -279,6 +279,28 @@ public class ImageUtils {
             overlapArea = overlapHeight * overlapWidth;
             minArea = Math.min(width1 * height1, width2 * height2);
             IOU = overlapArea / (float) (minArea);
+            return IOU;
+        }
+    }
+
+    /**
+     * Intersection over Rect1 = area of overlap / area of union
+     */
+    public static float calculateIOR1(RectF rect1, RectF rect2) {
+        float IOU;
+        float width1 = rect1.width();
+        float height1 = rect1.height();
+        float overlapWidth, overlapHeight;
+        float overlapArea, R1Area;
+
+        if (rect1.left > rect2.right || rect2.left > rect1.right || rect1.top > rect2.bottom || rect2.top > rect1.bottom)
+            return 0;
+        else {
+            overlapWidth = Math.abs(Math.min(rect1.right, rect2.right) - Math.max(rect1.left, rect2.left));
+            overlapHeight = Math.abs(Math.min(rect1.bottom, rect2.bottom) - Math.max(rect1.top, rect2.top));
+            overlapArea = overlapHeight * overlapWidth;
+            R1Area = width1 * height1;
+            IOU = overlapArea / (float) (R1Area);
             return IOU;
         }
     }

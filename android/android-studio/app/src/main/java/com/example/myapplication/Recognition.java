@@ -19,17 +19,17 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 
 public class Recognition {
-    private String label;
+    protected String label;
     // confidence
-    private float prob;
+    protected float prob;
     // normalized location in form of float, range from 0 to 1
-    private RectF location;
+    protected RectF location;
     // real location in the input image, in form of int
-    private Rect locationInt;
+    protected Rect locationInt;
 
     // size of the input image
-    private int imgHeight;
-    private int imgWidth;
+    protected int imgHeight;
+    protected int imgWidth;
 
     /**
      * Constructor

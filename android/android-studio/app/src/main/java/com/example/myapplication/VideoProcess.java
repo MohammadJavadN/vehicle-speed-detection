@@ -9,9 +9,7 @@ import android.graphics.RectF;
 import android.view.SurfaceView;
 
 import org.opencv.core.Mat;
-import org.opencv.core.Point;
 import org.opencv.core.Size;
-import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
 import org.opencv.videoio.VideoWriter;
 import org.opencv.videoio.Videoio;
@@ -33,11 +31,12 @@ public class VideoProcess {
     private Bitmap frameBitmap;
     private Mat frame;
     private int previewHeight, previewWidth;
+    public int viewH, viewW;
     private Bitmap scaledBitmap;
     private Matrix frameToCropTransform;
     private Matrix cropToFrameTransform;
     private Matrix normToCropTransform;
-    private Matrix normToFrameTransform;
+    Matrix normToFrameTransform;
     private Matrix cropToScaledCropTransform;
     private Detector detector;
 
@@ -63,12 +62,12 @@ public class VideoProcess {
         int height = (int) cap.get(Videoio.CAP_PROP_FRAME_HEIGHT);
         this.videoWriter = new VideoWriter(outVideoPath, fourcc, fps, new Size(width, height));
 
+        frameNum = 0;
         if (readNextFrameAsBitmap()) {
             this.previewHeight = frame.rows();
             this.previewWidth = frame.cols();
         }
-//        this.previewHeight = cap.getHeight();
-//        this.previewWidth = cap.getWidth();
+
         this.surfaceView = surfaceView;
         this.detector = detector;
 
@@ -129,25 +128,21 @@ public class VideoProcess {
     protected boolean doProcessForNextFrame() {
         if (readNextFrameAsBitmap()) {
 
-            // scale the image to the required input size of model
-            ScaleImg(frameBitmap, scaledBitmap, frameToCropTransform);
-            // detect objects using detector
-            List<Recognition> recognitionList = detector.detect(scaledBitmap, frameBitmap);
+            System.out.println("in doProcessForNextFrame, readNextFrameAsBitmap() done");
 
-            // remove unnecessary detected recognitions
-            String[] classes = {"car", "motorcycle", "bus", "truck"};
-            ImageUtils.filteroutRecognitions(classes, recognitionList);
+            List<Recognition> recognitionList = extractCarsFromFrame();
 
-            // merge the overlapped and adjacent recognitions
-            ImageUtils.mergeRecognitions(this.previewHeight, this.previewWidth, recognitionList);
+            System.out.println("in doProcessForNextFrame, extractCarsFromFrame() done");
 
             ArrayList<Car> cars = assignIDAndSpeed(recognitionList);
-            
-            drawCarsSpeed(frameBitmap, cars);
-            System.out.println("line 149");
 
-            show();
-            System.out.println("line 126");
+            System.out.println("in doProcessForNextFrame, assignIDAndSpeed() done");
+
+            drawCarsSpeed(frameBitmap, cars);
+
+            System.out.println("in doProcessForNextFrame, drawCarsSpeed() done");
+
+            show(true);
 
             // TODO: 12.04.24
 //            saveOutput();
@@ -156,6 +151,23 @@ public class VideoProcess {
         }
         return false;
 
+    }
+
+    protected List<Recognition> extractCarsFromFrame(){
+
+        // scale the image to the required input size of model
+        ScaleImg(frameBitmap, scaledBitmap, frameToCropTransform);
+        // detect objects using detector
+        List<Recognition> recognitionList = detector.detect(scaledBitmap, frameBitmap);
+
+        // remove unnecessary detected recognitions
+        String[] classes = {"car"};
+        ImageUtils.filteroutRecognitions(classes, recognitionList);
+
+        // merge the overlapped and adjacent recognitions
+        ImageUtils.mergeRecognitions(this.previewHeight, this.previewWidth, recognitionList);
+
+        return recognitionList;
     }
 
     private void saveOutput() {
@@ -167,39 +179,64 @@ public class VideoProcess {
             }
     }
 
-    private void show() {
+    public boolean show(boolean isShowLine) {
         Canvas canvas = surfaceView.getHolder().lockCanvas();
         if (canvas != null) {
             // Render the frame onto the canvas
             // Ensure you have a valid 'frame' variable holding the current frame
-            int w = canvas.getWidth();
-            int h = canvas.getHeight();
+            viewW = canvas.getWidth();
+            viewH = canvas.getHeight();
             Matrix matrix = new Matrix();
             matrix.postRotate(90);
-            Bitmap scaledBitmap = Bitmap.createScaledBitmap(frameBitmap, h, w, false);
-            Bitmap rotatedBitmap = Bitmap.createBitmap(scaledBitmap, 0, 0, h, w, matrix, true);
+            Bitmap scaledBitmap = Bitmap.createScaledBitmap(frameBitmap, viewH, viewW, false);
+            Bitmap rotatedBitmap = Bitmap.createBitmap(scaledBitmap, 0, 0, viewH, viewW, matrix, true);
+            if (isShowLine)
+                roadLine.drawLines(rotatedBitmap);
             canvas.drawBitmap(rotatedBitmap, 0, 0, null);
             surfaceView.getHolder().unlockCanvasAndPost(canvas);
+            return true;
         }
+        return false;
     }
 
     private ArrayList<Car> assignIDAndSpeed(List<Recognition> recognitionList) {
+        Car.updateAllTrackers(frame);
+
+        System.out.println("in assignIDAndSpeed, Car.updateAllTrackers(frame) done");
+
+        Car.updateAllSpeeds(roadLine);
+
+        System.out.println("in assignIDAndSpeed, Car.updateAllSpeeds(roadLine) done");
+
+//        for (Recognition recognition : recognitionList) {
+//            for (Car car: Car.getCars()) {
+//                if (!car.isShow)
+//                    if (ImageUtils.calculateIOR1(recognition.getLocation(), car.location) > 0.5)
+//                        recognition.setLocation(new RectF(0,0,0,0));
+//            }
+//        }
+
         for (Recognition recognition : recognitionList) {
-            Car.setIDAndSpeed(recognition.getLocation(), frameNum, roadLine);
+            Car.setIDAndSpeed(recognition, frame, frameNum, roadLine);
         }
-        Car.removeOutCars(frameNum);
-        ArrayList<Car> cars = new ArrayList<>();
-        for (Car car: Car.getCars()) {
-            if (car.getFrameNum() == frameNum)
-                cars.add(car);
-        }
-        return cars;
+        System.out.println("in assignIDAndSpeed, Car.setIDAndSpeed(recognition, frame, frameNum, context) done");
+
+        Car.removeUnderScoreCars(); // todo
+//        Car.removeOutCars(frameNum); // todo
+//        ArrayList<Car> cars = new ArrayList<>();
+//        for (Car car: Car.getCars()) {
+//            if (car.getFrameNum() == frameNum)
+//                cars.add(car);
+//        }
+        return Car.getCars();
     }
 
     private void drawCarsSpeed(Bitmap bitmap, ArrayList<Car> cars) {
         Canvas canvas = new Canvas(bitmap);
         Matrix frameToCanvasMatrix = getFrameToCanvasMatrix(canvas, bitmap);
         for (Car car : cars) {
+            if (!car.isShow)
+                continue;
             RectF rect = new RectF();
             normToFrameTransform.mapRect(rect, car.getLocation());
 
